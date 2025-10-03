@@ -1,13 +1,9 @@
 import os
-import json
 import logging
-from datetime import datetime
-from threading import Lock
-from flask import Flask, request
+import json
 from telebot import TeleBot, types
-from telebot.types import Update
+from flask import Flask, request
 from dotenv import load_dotenv
-import requests
 
 # --- Logging sozlamalari ---
 logging.basicConfig(
@@ -19,394 +15,235 @@ logging.basicConfig(
 # --- Muhit o‘zgaruvchilari ---
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID")
-
-if not all([BOT_TOKEN, ADMIN_ID]):
-    logging.error("Muhit o‘zgaruvchilari yetishmayapti!")
-    raise ValueError("BOT_TOKEN yoki ADMIN_ID aniqlanmagan!")
-
-try:
-    ADMIN_ID = int(ADMIN_ID)
-except ValueError:
-    logging.error("ADMIN_ID butun son bo‘lishi kerak!")
-    raise ValueError("ADMIN_ID butun son bo‘lishi kerak!")
-
-# Render URL ni aniqlash
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://qino.onrender.com")
-if not RENDER_URL:
-    logging.error("Render URL aniqlanmadi!")
-    raise ValueError("Render URL aniqlanmadi!")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Fayllar va sinxronizatsiya ---
-MOVIES_FILE = "movies.json"
-CHANNELS_FILE = "channels.json"
-USERS_FILE = "users.json"
-PENDING_REQUESTS_FILE = "pending_requests.json"
-file_lock = Lock()
+# --- JSON fayllar ---
+USERS_FILE = "users_data.json"  # Foydalanuvchilar ma'lumotlari
+MOVIES_FILE = "movies.json"    # Kinolar ma'lumotlari
+CHANNELS_FILE = "channels.json" # Kanallar ro'yxati
 
-# --- JSON fayl funksiyalari ---
-def load_json(file):
-    with file_lock:
-        try:
-            if not os.path.exists(file):
-                default_data = {} if "users" in file or "pending" in file else []
-                with open(file, "w") as f:
-                    json.dump(default_data, f)
-            with open(file, "r") as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON faylni o‘qishda xato: {file}, {str(e)}")
-            return {} if "users" in file or "pending" in file else []
-        except Exception as e:
-            logging.error(f"Faylni o‘qishda xato: {file}, {str(e)}")
-            raise
+# --- JSON fayllarni yuklash/funksiyalar ---
+def load_json(file_path, default):
+    if not os.path.exists(file_path):
+        with open(file_path, "w") as f:
+            json.dump(default, f)
+    with open(file_path, "r") as f:
+        return json.load(f)
 
-def save_json(file, data):
-    with file_lock:
-        try:
-            with open(file, "w") as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            logging.error(f"Faylni saqlashda xato: {file}, {str(e)}")
-            raise
+def save_json(file_path, data):
+    with open(file_path, "w") as f:
+        json.dump(data, f, indent=4)
 
-# --- Foydalanuvchi ma’lumotlari ---
-def get_user(user_id):
-    users = load_json(USERS_FILE)
-    user_id_str = str(user_id)
-    if user_id_str not in users:
-        users[user_id_str] = {
-            "joined_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+# --- Foydalanuvchilar ---
+def get_user(chat_id):
+    users = load_json(USERS_FILE, {})
+    if str(chat_id) not in users:
+        users[str(chat_id)] = {"subscribed": False}
         save_json(USERS_FILE, users)
-    return users[user_id_str]
+    return users[str(chat_id)]
 
-def update_user(user_id, user_data):
-    users = load_json(USERS_FILE)
-    users[str(user_id)] = user_data
+def update_user(chat_id, user_data):
+    users = load_json(USERS_FILE, {})
+    users[str(chat_id)] = user_data
     save_json(USERS_FILE, users)
 
-# --- Kino ma’lumotlari ---
-def add_movie(name, file_id):
-    movies = load_json(MOVIES_FILE)
-    movie_id = len(movies) + 1  # Avtomatik ID generatsiya
-    movies.append({"id": movie_id, "name": name, "file_id": file_id})
+# --- Kinolar ---
+def add_movie(movie_id, file_id, name):
+    movies = load_json(MOVIES_FILE, [])
+    movies.append({"id": movie_id, "file_id": file_id, "name": name})
     save_json(MOVIES_FILE, movies)
-    return movie_id
 
 def delete_movie(movie_id):
-    movies = load_json(MOVIES_FILE)
+    movies = load_json(MOVIES_FILE, [])
     movies = [m for m in movies if m['id'] != movie_id]
     save_json(MOVIES_FILE, movies)
 
-def get_movies():
-    return [(m['id'], m['name']) for m in load_json(MOVIES_FILE)]
-
-def find_movie(movie_id):
-    movies = load_json(MOVIES_FILE)
-    for m in movies:
-        if m['id'] == movie_id:
-            return m
+def get_movie(movie_id):
+    movies = load_json(MOVIES_FILE, [])
+    for movie in movies:
+        if movie['id'] == movie_id:
+            return movie
     return None
 
-# --- Kanal ma’lumotlari ---
-def add_channel(channel_link):
-    channels = load_json(CHANNELS_FILE)
-    # Full linkdan faqat kerakli qismni olamiz
-    if channel_link.startswith('https://t.me/'):
-        channel_link = channel_link.replace('https://t.me/', '')
-    if channel_link not in channels:
-        channels.append(channel_link)
+# --- Kanallar ---
+def get_channels():
+    return load_json(CHANNELS_FILE, [])
+
+def add_channel(channel):
+    channels = get_channels()
+    if channel not in channels:
+        channels.append(channel)
         save_json(CHANNELS_FILE, channels)
 
-def delete_channel(channel_id):
-    channels = load_json(CHANNELS_FILE)
-    if channel_id in channels:
-        channels.remove(channel_id)
+def remove_channel(channel):
+    channels = get_channels()
+    if channel in channels:
+        channels.remove(channel)
         save_json(CHANNELS_FILE, channels)
 
-# --- Kanal so‘rov va a’zolik tekshiruvi ---
-def check_subscription(user_id, channel_id):
-    try:
-        # Chat ID formatini aniqlash
-        if channel_id.startswith('+'):
-            chat_id = f"-100{channel_id[1:]}"
-        else:
-            chat_id = channel_id
-        member = bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except Exception as e:
-        logging.error(f"Kanal a’zoligini tekshirishda xato: {channel_id}, Xato: {str(e)}")
-        return False
-
-def has_pending_request(user_id, channel_id):
-    pending = load_json(PENDING_REQUESTS_FILE)
-    user_id_str = str(user_id)
-    return channel_id in pending and user_id_str in pending[channel_id]
-
-def is_subscribed_or_pending(user_id):
-    channels = load_json(CHANNELS_FILE)
-    if not channels:
-        return True
-    return all(check_subscription(user_id, ch) or has_pending_request(user_id, ch) for ch in channels)
-
-def add_pending_request(user_id, channel):
-    pending = load_json(PENDING_REQUESTS_FILE)
-    user_id_str = str(user_id)
-    if channel not in pending:
-        pending[channel] = []
-    if user_id_str not in pending[channel]:
-        pending[channel].append(user_id_str)
-        save_json(PENDING_REQUESTS_FILE, pending)
-        logging.info(f"So‘rov qo‘shildi: {user_id} uchun {channel}")
-
-# --- Kanal nomlarini zamonaviy tarzda ko‘rsatish ---
-def format_channels():
-    channels = load_json(CHANNELS_FILE)
-    if not channels:
-        return "Kanal yo‘q.", None
-    markup = types.InlineKeyboardMarkup()
-    text = "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling"
-    for i, ch in enumerate(channels):
-        channel_name = f"{i+1}-kanal"
-        channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
-        markup.add(types.InlineKeyboardButton(
-            text=f"Obuna bo‘lish ({channel_name})",
-            url=f"https://{channel_link}"
-        ))
-    markup.add(types.InlineKeyboardButton(
-        text="✅ Obunani tekshirish",
-        callback_data="check_subscription"
-    ))
-    return text, markup
+# --- Kanal a’zoligi tekshirish ---
+def check_channel_membership(chat_id):
+    channels = get_channels()
+    for channel in channels:
+        try:
+            member = bot.get_chat_member(channel, chat_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                return False
+        except:
+            return False
+    return True
 
 # --- Klaviaturalar ---
-def admin_panel():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("➕ Kino qo‘shish", "❌ Kino o‘chirish")
-    markup.add("📋 Kinolar ro‘yxati", "➕ Kanal qo‘shish", "❌ Kanal o‘chirish")
-    markup.add("📊 Statisika", "🔙 Orqaga")
-    return markup
-
 def main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🎥 Kino topish")
-    return markup
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("🎬 Kino topish")
+    return kb
 
-# --- Bot handlerlari ---
+def admin_panel():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("➕ Kino qo‘shish", "❌ Kino o‘chirish")
+    kb.add("➕ Kanal qo‘shish", "❌ Kanal o‘chirish")
+    kb.add("🔙 Orqaga")
+    return kb
+
+# --- Obuna bo‘lish tugmalari ---
+def force_subscribe(chat_id):
+    channels = get_channels()
+    if not channels:
+        return False
+    markup = types.InlineKeyboardMarkup()
+    for ch in channels:
+        markup.add(types.InlineKeyboardButton(
+            text=f"🔗 {ch}",
+            url=f"https://t.me/{ch[1:]}" if ch.startswith("@") else f"https://t.me/{ch}"
+        ))
+    markup.add(types.InlineKeyboardButton("✅ Tekshirish", callback_data="check_subs"))
+    bot.send_message(chat_id, "👉 Kino ko‘rish uchun quyidagi kanallarga a’zo bo‘ling:", reply_markup=markup)
+    return True
+
+# --- /start komandasi ---
 @bot.message_handler(commands=["start"])
 def start(message):
-    user_id = message.chat.id
-    get_user(user_id)  # Foydalanuvchini ro‘yxatga qo‘shish
-    if user_id == ADMIN_ID:
-        bot.send_message(user_id, "🎮 Admin panelga xush kelibsiz!", reply_markup=admin_panel())
+    chat_id = message.chat.id
+    user = get_user(chat_id)
+
+    # --- Kanal tekshirish ---
+    if not check_channel_membership(chat_id):
+        force_subscribe(chat_id)
+        user["subscribed"] = False
+        update_user(chat_id, user)
+        return
+
+    user["subscribed"] = True
+    update_user(chat_id, user)
+    bot.send_message(chat_id, "Assalomu alaykum! Kino topish uchun menyuni ishlatishingiz mumkin:", reply_markup=main_menu())
+
+# --- Inline tugma qayta tekshirish ---
+@bot.callback_query_handler(func=lambda call: call.data == "check_subs")
+def recheck_subscription(call):
+    chat_id = call.from_user.id
+    user = get_user(chat_id)
+    if check_channel_membership(chat_id):
+        bot.answer_callback_query(call.id, "✅ Obuna bo‘ldingiz!")
+        user["subscribed"] = True
+        update_user(chat_id, user)
+        bot.send_message(call.message.chat.id, "Endi kino topishingiz mumkin ✅", reply_markup=main_menu())
     else:
-        if not is_subscribed_or_pending(user_id):
-            text, markup = format_channels()
-            bot.send_message(user_id, text, reply_markup=markup)
-            return
-        bot.send_message(user_id, "🎬 Salom! Kino raqamini yozing va kinoni oling.", reply_markup=main_menu())
+        bot.answer_callback_query(call.id, "❌ Hali barcha kanallarga obuna bo‘lmadingiz.")
+        force_subscribe(chat_id)
 
-@bot.message_handler(func=lambda m: m.text == "🎥 Kino topish")
+# --- Kino topish ---
+@bot.message_handler(func=lambda m: m.text == "🎬 Kino topish")
 def kino_topish(message):
-    user_id = message.chat.id
-    if not is_subscribed_or_pending(user_id):
-        text, markup = format_channels()
-        bot.send_message(user_id, text, reply_markup=markup)
+    chat_id = message.chat.id
+    user = get_user(chat_id)
+    if not user["subscribed"] or not check_channel_membership(chat_id):
+        force_subscribe(chat_id)
         return
-    bot.send_message(user_id, "🔢 Kino raqamini kiriting:")
+    bot.send_message(chat_id, "🔢 Kino raqamini kiriting:")
 
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
-    user_id = message.chat.id
-    if user_id != ADMIN_ID:
-        bot.send_message(user_id, "🚫 Faqat admin kino yuklay oladi!")
+@bot.message_handler(func=lambda m: True)
+def handle_message(message):
+    chat_id = message.chat.id
+    user = get_user(chat_id)
+    if not user["subscribed"] or not check_channel_membership(chat_id):
+        force_subscribe(chat_id)
         return
-    file_id = message.video.file_id
-    bot.send_message(user_id, "📽 Kino nomini kiriting:", reply_markup=types.ForceReply())
-    bot.register_next_step_handler(message, lambda m: add_movie_name(m, file_id))
+    try:
+        movie_id = int(message.text)
+        movie = get_movie(movie_id)
+        if movie:
+            bot.send_video(chat_id, movie['file_id'], caption=f"🎬 {movie['name']}")
+            logging.info(f"Kino yuborildi: {chat_id} uchun ID {movie_id}")
+        else:
+            bot.send_message(chat_id, "🚫 Bunday kino topilmadi. Iltimos, raqamni tekshiring!")
+    except ValueError:
+        pass  # Faqat son bo‘lmasa o‘tkazib yuborish
 
-def add_movie_name(message, file_id):
-    name = message.text
-    movie_id = add_movie(name, file_id)  # Avtomatik ID
-    bot.send_message(message.chat.id, f"✅ Kino qo‘shildi: ID {movie_id} - {name}")
-    logging.info(f"Kino qo‘shildi: ID {movie_id}, {name}")
-
+# --- Admin panel ---
 @bot.message_handler(func=lambda m: m.chat.id == ADMIN_ID)
-def admin_commands(message):
-    if message.text == "➕ Kino qo‘shish":
-        bot.send_message(message.chat.id, "🎥 Video faylni yuboring yoki boshqa chatdan uzating:")
+def admin(message):
+    if message.text == "/admin":
+        bot.send_message(message.chat.id, "Admin panel:", reply_markup=admin_panel())
+    elif message.text == "➕ Kino qo‘shish":
+        msg = bot.send_message(message.chat.id, "Kino raqamini kiriting:", reply_markup=types.ForceReply(selective=False))
+        bot.register_next_step_handler(msg, process_add_movie_id)
     elif message.text == "❌ Kino o‘chirish":
-        msg = bot.send_message(message.chat.id, "🗑 O‘chiriladigan kino raqamini kiriting:", reply_markup=types.ForceReply())
-        bot.register_next_step_handler(msg, delete_movie_step)
-    elif message.text == "📋 Kinolar ro‘yxati":
-        movies = get_movies()
-        text = "🎬 Kinolar ro‘yxati:\n" + "\n".join([f"{id}: {name}" for id, name in movies]) if movies else "Kinolar yo‘q."
-        bot.send_message(message.chat.id, text)
+        msg = bot.send_message(message.chat.id, "O‘chiriladigan kino raqamini kiriting:", reply_markup=types.ForceReply(selective=False))
+        bot.register_next_step_handler(msg, process_delete_movie)
     elif message.text == "➕ Kanal qo‘shish":
-        msg = bot.send_message(message.chat.id, "📢 Kanal full link’ini kiriting (masalan, https://t.me/+WUe-0dONv7EzMjVi):", reply_markup=types.ForceReply())
-        bot.register_next_step_handler(msg, add_channel_step)
+        msg = bot.send_message(message.chat.id, "Kanal username (@ bilan) kiriting:", reply_markup=types.ForceReply(selective=False))
+        bot.register_next_step_handler(msg, lambda m: add_channel(m.text) or bot.send_message(message.chat.id, f"Kanal qo‘shildi: {m.text}"))
     elif message.text == "❌ Kanal o‘chirish":
-        msg = bot.send_message(message.chat.id, "🗑 O‘chiriladigan kanal raqamini kiriting (masalan, 1 yoki 2):", reply_markup=types.ForceReply())
-        bot.register_next_step_handler(msg, remove_channel)
-    elif message.text == "📊 Statistika":
-        users = load_json(USERS_FILE)
-        bot.send_message(message.chat.id, f"👥 Foydalanuvchilar soni: {len(users)}")
+        msg = bot.send_message(message.chat.id, "O‘chiriladigan kanal username (@ bilan) kiriting:", reply_markup=types.ForceReply(selective=False))
+        bot.register_next_step_handler(msg, lambda m: remove_channel(m.text) or bot.send_message(message.chat.id, f"Kanal o‘chirildi: {m.text}"))
     elif message.text == "🔙 Orqaga":
-        bot.send_message(message.chat.id, "🏠 Asosiy menyuga qaytildi", reply_markup=main_menu())
+        bot.send_message(message.chat.id, "Asosiy menyuga qaytildi", reply_markup=main_menu())
 
-def delete_movie_step(message):
+def process_add_movie_id(message):
+    chat_id = message.chat.id
+    try:
+        movie_id = int(message.text)
+        msg = bot.send_message(chat_id, "Kino nomini kiriting:", reply_markup=types.ForceReply(selective=False))
+        bot.register_next_step_handler(msg, process_add_movie_name, movie_id)
+    except ValueError:
+        bot.send_message(chat_id, "❌ Faqat son kiriting!")
+
+def process_add_movie_name(message, movie_id):
+    chat_id = message.chat.id
+    name = message.text
+    msg = bot.send_message(chat_id, "Kino videoni yuboring (video fayl):")
+    bot.register_next_step_handler(msg, process_add_movie_video, movie_id, name)
+
+def process_add_movie_video(message, movie_id, name):
+    chat_id = message.chat.id
+    if message.video:
+        file_id = message.video.file_id
+        add_movie(movie_id, file_id, name)
+        bot.send_message(chat_id, f"✅ Kino qo‘shildi: ID {movie_id}, Nomi: {name}")
+    else:
+        bot.send_message(chat_id, "❌ Iltimos, video fayl yuboring!")
+
+def process_delete_movie(message):
+    chat_id = message.chat.id
     try:
         movie_id = int(message.text)
         delete_movie(movie_id)
-        bot.send_message(message.chat.id, f"✅ Kino {movie_id} o‘chirildi.")
-        logging.info(f"Kino o‘chirildi: ID {movie_id}")
+        bot.send_message(chat_id, f"✅ Kino o‘chirildi: ID {movie_id}")
     except ValueError:
-        bot.send_message(message.chat.id, "🚫 Faqat raqam kiriting!")
-        logging.warning(f"Noto‘g‘ri kino raqami: {message.text}")
-
-def add_channel_step(message):
-    channel = message.text.strip()  # Full linkdan faqat kerakli qismni olamiz
-    if channel.startswith('https://t.me/'):
-        channel = channel.replace('https://t.me/', '')
-    add_channel(channel)
-    bot.send_message(message.chat.id, f"✅ Kanal qo‘shildi: {channel}")
-    logging.info(f"Kanal qo‘shildi: {channel}")
-
-def remove_channel(message):
-    try:
-        channel_index = int(message.text) - 1
-        channels = load_json(CHANNELS_FILE)
-        if 0 <= channel_index < len(channels):
-            channel = channels[channel_index]
-            delete_channel(channel)
-            bot.send_message(message.chat.id, f"✅ {channel_index + 1}-kanal o‘chirildi.")
-            logging.info(f"Kanal o‘chirildi: {channel}")
-        else:
-            bot.send_message(message.chat.id, "🚫 Bunday kanal raqami yo‘q!")
-    except ValueError:
-        bot.send_message(message.chat.id, "🚫 Faqat raqam kiriting (masalan, 1 yoki 2)!")
-        logging.warning(f"Noto‘g‘ri kanal raqami: {message.text}")
-
-# --- Oddiy xabarlar (kino raqami) ---
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    user_id = message.chat.id
-    if user_id == ADMIN_ID:
-        return  # Admin buyruqlari yuqorida ishlaydi
-    if not is_subscribed_or_pending(user_id):
-        text, markup = format_channels()
-        bot.send_message(user_id, text, reply_markup=markup)
-        return
-    try:
-        movie_id = int(message.text)
-        movie = find_movie(movie_id)
-        if movie:
-            bot.send_video(user_id, movie['file_id'], caption=f"🎬 {movie['name']}")
-            logging.info(f"Kino yuborildi: {user_id} uchun ID {movie_id}")
-        else:
-            bot.send_message(user_id, "🚫 Bunday kino topilmadi.")
-    except ValueError:
-        bot.send_message(user_id, "🔢 Iltimos, faqat kino raqamini kiriting!")
-
-# --- Kanalga so‘rov handleri ---
-@bot.chat_join_request_handler()
-def handle_join_request(request):
-    user_id = request.from_user.id
-    channel = request.chat.username if request.chat.username else str(request.chat.id).replace('-100', '')  # Faqat ID yoki username
-    add_pending_request(user_id, channel)
-
-# --- Obuna tekshirish handleri ---
-@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
-def check_subscription_callback(call):
-    user_id = call.from_user.id
-    channels = load_json(CHANNELS_FILE)
-    if not channels:
-        bot.edit_message_text(
-            chat_id=user_id,
-            message_id=call.message.message_id,
-            text="✅ Kanal yo‘q, botdan foydalanishingiz mumkin!",
-            reply_markup=None
-        )
-        bot.send_message(user_id, "🎬 Kino raqamini kiriting:", reply_markup=main_menu())
-        return
-
-    unsubscribed_channels = []
-    for ch in channels:
-        if not (check_subscription(user_id, ch) or has_pending_request(user_id, ch)):
-            unsubscribed_channels.append(ch)
-
-    if unsubscribed_channels:
-        markup = types.InlineKeyboardMarkup()
-        text = "📢 Quyidagi kanallarga obuna bo‘lmadingiz yoki so‘rov yubormadingiz:"
-        for i, ch in enumerate(unsubscribed_channels):
-            channel_name = f"{i+1}-kanal"
-            channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
-            markup.add(types.InlineKeyboardButton(
-                text=channel_name,
-                url=f"https://{channel_link}"
-            ))
-        markup.add(types.InlineKeyboardButton(
-            text="✅ Obunani tekshirish",
-            callback_data="check_subscription"
-        ))
-        bot.edit_message_text(
-            chat_id=user_id,
-            message_id=call.message.message_id,
-            text=text,
-            reply_markup=markup
-        )
-    else:
-        bot.edit_message_text(
-            chat_id=user_id,
-            message_id=call.message.message_id,
-            text="✅ Barcha kanallarga obuna bo‘ldingiz yoki so‘rov yubordingiz! Botdan foydalanishingiz mumkin.",
-            reply_markup=None
-        )
-        bot.send_message(user_id, "🎬 Kino raqamini kiriting:", reply_markup=main_menu())
-
-# --- Webhook o‘rnatish ---
-def setup_webhook():
-    webhook_url = f"{RENDER_URL}/{BOT_TOKEN}"
-    try:
-        bot.remove_webhook()
-        bot.set_webhook(url=webhook_url)
-        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo").json()
-        if response.get("ok") and response.get("result").get("url") == webhook_url:
-            logging.info(f"Vebhook muvaffaqiyatli o‘rnatildi: {webhook_url}")
-        else:
-            logging.error(f"Vebhook o‘rnatishda xato: {response}")
-    except Exception as e:
-        logging.error(f"Vebhook o‘rnatishda xato: {str(e)}")
-        raise
+        bot.send_message(chat_id, "❌ Faqat son kiriting!")
 
 # --- Flask webhook ---
-@app.route(f"/{BOT_TOKEN}", methods=["GET", "POST"])
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    if request.method == "GET":
-        return "🎬 Kino bot ishlayapti! Webhook faol."
-    try:
-        json_str = request.get_data().decode("utf-8")
-        update = Update.de_json(json_str)
-        if update:
-            bot.process_new_updates([update])
-        return "OK", 200
-    except Exception as e:
-        logging.error(f"Vebhook xatosi: {str(e)}")
-        return "ERROR", 500
+    json_update = request.get_json(force=True)
+    if json_update:
+        update = types.Update.de_json(json_update)
+        bot.process_new_updates([update])
+    return "OK", 200
 
-@app.route("/")
-def index():
-    return "🎬 Kino bot ishlayapti! Webhook faol."
-
-# --- Botni ishga tushirish ---
 if __name__ == "__main__":
-    try:
-        setup_webhook()  # Webhook avtomatik o‘rnatiladi
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-    except Exception as e:
-        logging.error(f"Botni ishga tushirishda xato: {str(e)}")
-        raise
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
