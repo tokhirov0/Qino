@@ -113,10 +113,13 @@ def find_movie(movie_id):
     return None
 
 # --- Kanal ma’lumotlari ---
-def add_channel(channel_id):
+def add_channel(channel_link):
     channels = load_json(CHANNELS_FILE)
-    if channel_id not in channels:
-        channels.append(channel_id)
+    # Full linkdan faqat kerakli qismni olamiz
+    if channel_link.startswith('https://t.me/'):
+        channel_link = channel_link.replace('https://t.me/', '')
+    if channel_link not in channels:
+        channels.append(channel_link)
         save_json(CHANNELS_FILE, channels)
 
 def delete_channel(channel_id):
@@ -143,7 +146,7 @@ def is_subscribed_or_pending(user_id):
     channels = load_json(CHANNELS_FILE)
     if not channels:
         return True
-    return any(check_subscription(user_id, ch) or has_pending_request(user_id, ch) for ch in channels)
+    return all(check_subscription(user_id, ch) or has_pending_request(user_id, ch) for ch in channels)
 
 def add_pending_request(user_id, channel):
     pending = load_json(PENDING_REQUESTS_FILE)
@@ -239,7 +242,7 @@ def admin_commands(message):
         text = "🎬 Kinolar ro‘yxati:\n" + "\n".join([f"{id}: {name}" for id, name in movies]) if movies else "Kinolar yo‘q."
         bot.send_message(message.chat.id, text)
     elif message.text == "➕ Kanal qo‘shish":
-        msg = bot.send_message(message.chat.id, "📢 Kanal username’ini yoki invite link’ini kiriting (masalan, MyChannel yoki t.me/+HFwkwlfgSxs5OTUy):", reply_markup=types.ForceReply())
+        msg = bot.send_message(message.chat.id, "📢 Kanal full link’ini kiriting (masalan, https://t.me/+WUe-0dONv7EzMjVi):", reply_markup=types.ForceReply())
         bot.register_next_step_handler(msg, add_channel_step)
     elif message.text == "❌ Kanal o‘chirish":
         msg = bot.send_message(message.chat.id, "🗑 O‘chiriladigan kanal raqamini kiriting (masalan, 1 yoki 2):", reply_markup=types.ForceReply())
@@ -261,11 +264,9 @@ def delete_movie_step(message):
         logging.warning(f"Noto‘g‘ri kino raqami: {message.text}")
 
 def add_channel_step(message):
-    channel = message.text.strip()
-    if channel.startswith('t.me/+'):
-        channel = channel.replace('t.me/+', '')  # Faqat + dan keyingi qismni olamiz
-    elif channel.startswith('t.me/'):
-        channel = channel.replace('t.me/', '')  # Username uchun ham moslashtirish
+    channel = message.text.strip()  # Full linkdan faqat kerakli qismni olamiz
+    if channel.startswith('https://t.me/'):
+        channel = channel.replace('https://t.me/', '')
     add_channel(channel)
     bot.send_message(message.chat.id, f"✅ Kanal qo‘shildi: {channel}")
     logging.info(f"Kanal qo‘shildi: {channel}")
@@ -340,8 +341,8 @@ def check_subscription_callback(call):
             channel_name = f"{i+1}-kanal"
             channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
             markup.add(types.InlineKeyboardButton(
-                text=channel_name,  # Faqat kanal nomi, link ko‘rinmaydi
-                url=f"https://{channel_link}"  # Link yashirincha qo‘shiladi
+                text=channel_name,  # Faqat kanal nomi, link matn sifatida chiqmaydi
+                url=f"https://{channel_link}"
             ))
         markup.add(types.InlineKeyboardButton(
             text="✅ Obunani tekshirish",
