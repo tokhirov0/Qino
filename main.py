@@ -307,30 +307,57 @@ def handle_message(message):
 def handle_join_request(request):
     user_id = request.from_user.id
     channel = '@' + request.chat.username if request.chat.username else str(request.chat.id)
-    bot.approve_chat_join_request(chat_id=request.chat.id, user_id=user_id)  # Avtomatik sorovni qabul qilish
-    add_pending_request(user_id, channel)
-    bot.send_message(user_id, f"📢 {channel} kanaliga so‘rovingiz avtomatik qabul qilindi! Endi botdan foydalanishingiz mumkin.")
+    add_pending_request(user_id, channel)  # Avtomatik tasdiqlash xabari olib tashlandi
 
 # --- Obuna tekshirish handleri ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def check_subscription_callback(call):
     user_id = call.from_user.id
-    if is_subscribed_or_pending(user_id):
+    channels = load_json(CHANNELS_FILE)
+    if not channels:
         bot.edit_message_text(
             chat_id=user_id,
             message_id=call.message.message_id,
-            text="✅ Siz barcha kanallarga obuna bo‘ldingiz yoki so‘rov yubordingiz! Endi kino raqamini kiriting:",
+            text="✅ Kanal yo‘q, botdan foydalanishingiz mumkin!",
             reply_markup=None
         )
         bot.send_message(user_id, "🎬 Kino raqamini kiriting:", reply_markup=main_menu())
-    else:
-        text, markup = format_channels()
+        return
+
+    unsubscribed_channels = []
+    for ch in channels:
+        if not (check_subscription(user_id, ch) or has_pending_request(user_id, ch)):
+            unsubscribed_channels.append(ch)
+
+    if unsubscribed_channels:
+        markup = types.InlineKeyboardMarkup()
+        text = "📢 Quyidagi kanallarga obuna bo‘lmadingiz yoki so‘rov yubormadingiz:\n"
+        for i, ch in enumerate(unsubscribed_channels):
+            channel_name = f"{i+1}-kanal"
+            channel_link = f"t.me/{ch}"
+            text += f"{channel_name}: {channel_link}\n"
+            markup.add(types.InlineKeyboardButton(
+                text=f"Obuna bo‘lish ({channel_name})",
+                url=f"https://{channel_link}"
+            ))
+        markup.add(types.InlineKeyboardButton(
+            text="✅ Obunani tekshirish",
+            callback_data="check_subscription"
+        ))
         bot.edit_message_text(
             chat_id=user_id,
             message_id=call.message.message_id,
             text=text,
             reply_markup=markup
         )
+    else:
+        bot.edit_message_text(
+            chat_id=user_id,
+            message_id=call.message.message_id,
+            text="✅ Barcha kanallarga obuna bo‘ldingiz yoki so‘rov yubordingiz! Botdan foydalanishingiz mumkin.",
+            reply_markup=None
+        )
+        bot.send_message(user_id, "🎬 Kino raqamini kiriting:", reply_markup=main_menu())
 
 # --- Webhook o‘rnatish ---
 def setup_webhook():
