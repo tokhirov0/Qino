@@ -188,7 +188,7 @@ def admin_panel():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("➕ Kino qo‘shish", "❌ Kino o‘chirish")
     markup.add("📋 Kinolar ro‘yxati", "➕ Kanal qo‘shish", "❌ Kanal o‘chirish")
-    markup.add("📊 Statistika", "🔙 Orqaga")
+    markup.add("📊 Statisika", "🔙 Orqaga")
     return markup
 
 def main_menu():
