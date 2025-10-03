@@ -164,7 +164,7 @@ def format_channels():
     text = "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling"
     for i, ch in enumerate(channels):
         channel_name = f"{i+1}-kanal"
-        channel_link = f"t.me/{ch}"  # Admin to'g'ri username yoki chat ID qo'shadi
+        channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/{ch}"  # Chat invite link uchun moslashtirish
         markup.add(types.InlineKeyboardButton(
             text=f"Obuna bo‘lish ({channel_name})",
             url=f"https://{channel_link}"
@@ -239,7 +239,7 @@ def admin_commands(message):
         text = "🎬 Kinolar ro‘yxati:\n" + "\n".join([f"{id}: {name}" for id, name in movies]) if movies else "Kinolar yo‘q."
         bot.send_message(message.chat.id, text)
     elif message.text == "➕ Kanal qo‘shish":
-        msg = bot.send_message(message.chat.id, "📢 Kanal username’ini kiriting (masalan, MyChannel yoki -1001234567890):", reply_markup=types.ForceReply())
+        msg = bot.send_message(message.chat.id, "📢 Kanal username’ini yoki invite link’ini kiriting (masalan, MyChannel yoki t.me/+HFwkwlfgSxs5OTUy):", reply_markup=types.ForceReply())
         bot.register_next_step_handler(msg, add_channel_step)
     elif message.text == "❌ Kanal o‘chirish":
         msg = bot.send_message(message.chat.id, "🗑 O‘chiriladigan kanal raqamini kiriting (masalan, 1 yoki 2):", reply_markup=types.ForceReply())
@@ -261,7 +261,9 @@ def delete_movie_step(message):
         logging.warning(f"Noto‘g‘ri kino raqami: {message.text}")
 
 def add_channel_step(message):
-    channel = message.text.strip()  # @ belgisi shart emas
+    channel = message.text.strip()  # Invite link yoki username qabul qilish
+    if channel.startswith('t.me/+'):
+        channel = channel.replace('t.me/+', '')  # Faqat + dan keyingi qismni olamiz
     add_channel(channel)
     bot.send_message(message.chat.id, f"✅ Kanal qo‘shildi: {channel}")
     logging.info(f"Kanal qo‘shildi: {channel}")
@@ -307,7 +309,7 @@ def handle_message(message):
 def handle_join_request(request):
     user_id = request.from_user.id
     channel = '@' + request.chat.username if request.chat.username else str(request.chat.id)
-    add_pending_request(user_id, channel)  # Avtomatik tasdiqlash xabari olib tashlandi
+    add_pending_request(user_id, channel)  # Faqat so‘rov qo‘shiladi, xabar chiqmaydi
 
 # --- Obuna tekshirish handleri ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
@@ -334,7 +336,7 @@ def check_subscription_callback(call):
         text = "📢 Quyidagi kanallarga obuna bo‘lmadingiz yoki so‘rov yubormadingiz:\n"
         for i, ch in enumerate(unsubscribed_channels):
             channel_name = f"{i+1}-kanal"
-            channel_link = f"t.me/{ch}"
+            channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"  # Invite link uchun moslashtirish
             text += f"{channel_name}: {channel_link}\n"
             markup.add(types.InlineKeyboardButton(
                 text=f"Obuna bo‘lish ({channel_name})",
