@@ -164,7 +164,7 @@ def format_channels():
     text = "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling"
     for i, ch in enumerate(channels):
         channel_name = f"{i+1}-kanal"
-        channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/{ch}"  # Chat invite link uchun moslashtirish
+        channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
         markup.add(types.InlineKeyboardButton(
             text=f"Obuna bo‘lish ({channel_name})",
             url=f"https://{channel_link}"
@@ -261,9 +261,11 @@ def delete_movie_step(message):
         logging.warning(f"Noto‘g‘ri kino raqami: {message.text}")
 
 def add_channel_step(message):
-    channel = message.text.strip()  # Invite link yoki username qabul qilish
+    channel = message.text.strip()
     if channel.startswith('t.me/+'):
         channel = channel.replace('t.me/+', '')  # Faqat + dan keyingi qismni olamiz
+    elif channel.startswith('t.me/'):
+        channel = channel.replace('t.me/', '')  # Username uchun ham moslashtirish
     add_channel(channel)
     bot.send_message(message.chat.id, f"✅ Kanal qo‘shildi: {channel}")
     logging.info(f"Kanal qo‘shildi: {channel}")
@@ -333,14 +335,13 @@ def check_subscription_callback(call):
 
     if unsubscribed_channels:
         markup = types.InlineKeyboardMarkup()
-        text = "📢 Quyidagi kanallarga obuna bo‘lmadingiz yoki so‘rov yubormadingiz:\n"
+        text = "📢 Quyidagi kanallarga obuna bo‘lmadingiz yoki so‘rov yubormadingiz:"
         for i, ch in enumerate(unsubscribed_channels):
             channel_name = f"{i+1}-kanal"
-            channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"  # Invite link uchun moslashtirish
-            text += f"{channel_name}: {channel_link}\n"
+            channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
             markup.add(types.InlineKeyboardButton(
-                text=f"Obuna bo‘lish ({channel_name})",
-                url=f"https://{channel_link}"
+                text=channel_name,  # Faqat kanal nomi, link ko‘rinmaydi
+                url=f"https://{channel_link}"  # Link yashirincha qo‘shiladi
             ))
         markup.add(types.InlineKeyboardButton(
             text="✅ Obunani tekshirish",
