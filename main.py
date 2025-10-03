@@ -143,7 +143,7 @@ def is_subscribed_or_pending(user_id):
     channels = load_json(CHANNELS_FILE)
     if not channels:
         return True
-    return any(check_subscription(user_id, ch) or has_pending_request(user_id, ch) for ch in channels)  # `all` o'rniga `any` ishlatildi
+    return any(check_subscription(user_id, ch) or has_pending_request(user_id, ch) for ch in channels)
 
 def add_pending_request(user_id, channel):
     pending = load_json(PENDING_REQUESTS_FILE)
@@ -307,8 +307,9 @@ def handle_message(message):
 def handle_join_request(request):
     user_id = request.from_user.id
     channel = '@' + request.chat.username if request.chat.username else str(request.chat.id)
+    bot.approve_chat_join_request(chat_id=request.chat.id, user_id=user_id)  # Avtomatik sorovni qabul qilish
     add_pending_request(user_id, channel)
-    bot.send_message(user_id, f"📢 {channel} kanaliga so‘rovingiz qabul qilindi. Endi botdan foydalanishingiz mumkin yoki a’zo bo‘lsangiz, tasdiqlashni kuting.")
+    bot.send_message(user_id, f"📢 {channel} kanaliga so‘rovingiz avtomatik qabul qilindi! Endi botdan foydalanishingiz mumkin.")
 
 # --- Obuna tekshirish handleri ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
