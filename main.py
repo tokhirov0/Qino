@@ -131,10 +131,15 @@ def delete_channel(channel_id):
 # --- Kanal so‘rov va a’zolik tekshiruvi ---
 def check_subscription(user_id, channel_id):
     try:
-        member = bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        # Chat ID formatini aniqlash
+        if channel_id.startswith('+'):
+            chat_id = f"-100{channel_id[1:]}"
+        else:
+            chat_id = channel_id
+        member = bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        logging.error(f"Kanal a’zoligini tekshirishda xato: {channel_id}, {str(e)}")
+        logging.error(f"Kanal a’zoligini tekshirishda xato: {channel_id}, Xato: {str(e)}")
         return False
 
 def has_pending_request(user_id, channel_id):
@@ -311,8 +316,8 @@ def handle_message(message):
 @bot.chat_join_request_handler()
 def handle_join_request(request):
     user_id = request.from_user.id
-    channel = '@' + request.chat.username if request.chat.username else str(request.chat.id)
-    add_pending_request(user_id, channel)  # Faqat so‘rov qo‘shiladi, xabar chiqmaydi
+    channel = request.chat.username if request.chat.username else str(request.chat.id).replace('-100', '')  # Faqat ID yoki username
+    add_pending_request(user_id, channel)
 
 # --- Obuna tekshirish handleri ---
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
@@ -341,7 +346,7 @@ def check_subscription_callback(call):
             channel_name = f"{i+1}-kanal"
             channel_link = f"t.me/{ch}" if not ch.startswith('+') else f"t.me/+{ch}"
             markup.add(types.InlineKeyboardButton(
-                text=channel_name,  # Faqat kanal nomi, link matn sifatida chiqmaydi
+                text=channel_name,
                 url=f"https://{channel_link}"
             ))
         markup.add(types.InlineKeyboardButton(
