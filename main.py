@@ -161,11 +161,10 @@ def format_channels():
     if not channels:
         return "Kanal yo‘q.", None
     markup = types.InlineKeyboardMarkup()
-    text = "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:\n\n"
+    text = "📢 Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling"
     for i, ch in enumerate(channels):
         channel_name = f"{i+1}-kanal"
-        channel_link = f"t.me/{ch[1:] if ch.startswith('@') else ch}"
-        text += f"{channel_name}: {channel_link}\n"
+        channel_link = f"t.me/{ch}"  # Admin to'g'ri username yoki chat ID qo'shadi
         markup.add(types.InlineKeyboardButton(
             text=f"Obuna bo‘lish ({channel_name})",
             url=f"https://{channel_link}"
@@ -218,7 +217,6 @@ def handle_video(message):
     if user_id != ADMIN_ID:
         bot.send_message(user_id, "🚫 Faqat admin kino yuklay oladi!")
         return
-    # Forward qilingan yoki oddiy video bo‘lishi mumkin
     file_id = message.video.file_id
     bot.send_message(user_id, "📽 Kino nomini kiriting:", reply_markup=types.ForceReply())
     bot.register_next_step_handler(message, lambda m: add_movie_name(m, file_id))
@@ -241,7 +239,7 @@ def admin_commands(message):
         text = "🎬 Kinolar ro‘yxati:\n" + "\n".join([f"{id}: {name}" for id, name in movies]) if movies else "Kinolar yo‘q."
         bot.send_message(message.chat.id, text)
     elif message.text == "➕ Kanal qo‘shish":
-        msg = bot.send_message(message.chat.id, "📢 Kanal username’ini kiriting (@ bilan yoki bilmasdan, yoki chat ID):", reply_markup=types.ForceReply())
+        msg = bot.send_message(message.chat.id, "📢 Kanal username’ini kiriting (masalan, MyChannel yoki -1001234567890):", reply_markup=types.ForceReply())
         bot.register_next_step_handler(msg, add_channel_step)
     elif message.text == "❌ Kanal o‘chirish":
         msg = bot.send_message(message.chat.id, "🗑 O‘chiriladigan kanal raqamini kiriting (masalan, 1 yoki 2):", reply_markup=types.ForceReply())
@@ -263,7 +261,7 @@ def delete_movie_step(message):
         logging.warning(f"Noto‘g‘ri kino raqami: {message.text}")
 
 def add_channel_step(message):
-    channel = message.text
+    channel = message.text.strip()  # @ belgisi shart emas
     add_channel(channel)
     bot.send_message(message.chat.id, f"✅ Kanal qo‘shildi: {channel}")
     logging.info(f"Kanal qo‘shildi: {channel}")
